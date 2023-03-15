@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+		<style>
+			body{
+				padding-inline:2rem;
+			}
+			section,li{
+				max-width:70rem;
+			}
+			section > p,
+			ul>li{
+				font-size:20px;
+			}
+			* {
+				font-size-adjust: 20px;
+			}
+			.explanation {
+				margin-left: 2rem;
+			}
+		</style>
+		<title>AWS Learning</title>
+	</head>
+	<body>
+		<h1>What I have I learned so far about AWS?</h1>
+		<h2>Weekend Wins</h2>
+		<ul>
+			<li>
+				Hosted
+				<a href="http://brandon-static-html.s3-website-us-east-1.amazonaws.com/"
+					>my portfolio on AWS</a
+				>
+			</li>
+			<li>
+				Hosted a lambda function with API gateway (Removed to avoid invocation charges). <a href="https://github.com/Brandon-Schefstad/aws/blob/main/api-lambda-example/template.yml">See CFN Template on Github!</a>
+			</li>
+			<li>
+				Created local docker containers for static sites, was able to host onto
+				docker.io but not on ECR. Meant practicing docker CLI commands, authentication, etc. Defined task definitions to apply to the ECS cluster. 
+			</li>
+			<li>Hosted lambda via SAM (authentication credentials, REST responses)</li>
+			<li>Walkthrough CloudFormation templates with my friends who do not know AWS. Helped organize my thoughts a bit. </li>
+			<li>Loaded a PostgreSQL server on my computer and imported sample data to practice using DataGrips.</li>
+			<li>Troubleshoot deployment issues both via AWS CLI and AWS console.</li>
+			<li>Collaborated with engineers to establish continuous development to AWS S3 Bucket.  </li>
+		</ul>
+		<h2>General Architecture</h2>
+		<h2>CloudFormation</h2>
+		<section class="explanation">
+			<h3>Summary</h3>
+			<p>
+				Cloudformation is a way to programmatically create infrastructure within
+				the AWS ecosystem. It accepts either YAML or JSON templates to architect
+				specific physical resources. Logical Resources (names within the Resources section) will create physical resources within AWS.
+			</p>
+			<h3>Template Anatomy:</h3>
+			<pre>
+AWSTemplateFormatVersion: Info about this template version.
+Description: Written information about the template.
+Metadata: Information about the data in the template (e.g. implementation details)
+Parameters: Dynamic values (env, name, outputs)
+Mappings: Paired with FN::FindInMap to grab a value based on a given key in Mappings. Can search mappings to second level of nesting. 
+Conditions: Allows rendering based on different contexts (e.g. env) by referencing mapping, parameter, or other condition. They are joined with Resources and Outputs.
+Resources: Blueprint descriptions on what will be created in AWS infrastructure.
+Outputs: Information to be displayed after creation of the stack (to CLI or in GUI). Good for API endpoints.
+        </pre
+			>
+			<h3>Example Template:</h3>
+			<pre>
+AWSTemplateFormatVersion: "2010-09-09" Description: Here are some details about the template.
+Metadata:
+  Instances:
+    Description: "Information about the instances"
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues:
+      - Dev
+      - Test
+      - Prod
+    Description: 'Select an environment.'
+Mappings:
+    EnvironmentToBucketSuffix:
+      Dev:
+        Suffix: 'this-is-dev'
+      Test:
+        Suffix: 'use-only-for-testing'
+      Prod:
+        Suffix: 'be-careful-it-is-production'			
+Conditions:
+  Logical ID:
+    Intrinsic function
+Resources:
+    S3Bucket:
+      Type: AWS::S3::Bucket
+Outputs:
+    BucketARN:
+      Description: 'The ARN of the bucket.'
+      Value: !GetAtt S3Bucket.Arn
+        </pre
+			>
+			<h3>Parameters</h3>
+			<p>
+				Dynamic references within logical resources that influence the physical
+				infra created in AWS. Can be pseudo (injected by AWS such as
+				`us-east-1`) or template params which are added by users.
+			</p>
+			<h3>Intrinsic Functions</h3>
+			<p>
+				!Ref will return a value of a template or pseudoparam, but will return an ID (ARN?) of a logical resource. <code>!GetAtt LogicalResourceName.Attribute</code> will return the value of a specific attribute within a logical resource within the template.</p>
+			<h3>DependsOn</h3>
+			<p>
+				DependsOn lets the user explicitly orchestrate the order in which AWS
+				will create resources. Most of the time this is done implicitly through
+				references and functions but some situations require formal definitions.
+				(e.g. creating elastic IP with internet gateway without using !Ref)
+			</p>
+			<pre><code>
+WPEIP:
+	Type: AWS::EC2::EIP
+	DependsOn: InternetGatewayAttachment
+	Properties:
+		InstanceId: !Ref Wordpress EC2
+</code></pre>
+			<h3>cfn-Signal</h3>
+			<p>
+				CREATE_COMPLETE status is only scoped to AWS infrastructure setup. It
+				does not include things like bootstrapping. So cfn-signal allows you to
+				set a required number of success signals within a time limit (timeout),
+				then will change status to CREATE_COMPLETE. Any deviation or lack of
+				success signals, failure. Max time limit of 12 hours. 
+			</p>
+			<h3>WaitCondition</h3>
+			<p>
+				A Logical Resource within the template that relies on a !Ref WaitConditionHandle.
+				WaitConditionHandle creates pre-signed URL for a response object with {status,
+				reason, uniqueId, data} from scripts. WaitCondition checks URL for success/failure signals. 
+				Response objects can be accessed through <code>!GetATT WaitCondition.Data </code> to get data.
+			</p>
+			<pre><code>
+	WaitCondition:
+		Type: AWS::CloudFormation::WaitCondition
+		DependsOn: 'source'
+		Properties:
+			Handle: !Ref WaitHandle
+			Timeout: "300"
+			Count: "1"
+	</code></pre>
+			<h3>Nested Stacks - Modular pieces create NEW resources</h3>
+			<p>
+				Stacks can be monolithic, everything is created or destroyed as one
+				piece and share a lifecycle. Limit of 500 resources per stack and
+				inhibits reusing resources in other stacks (e.g. VPC)
+			</p>
+			<p>
+				Nested stacks allow a parent stack to invoke a template for a different
+				resource. Uses a combination of parameters, a templateURL, and outputs
+				from the child stack. This permits modular templates that will create
+				different physical resources, allowing reuse of stack templates. Reminds me of React components.
+				Increases limit to 2500 resources.
+			</p>
+			<pre><code>
+	VPCSTACK:
+		Type: AWS::CloudFormation::Stack
+		Properties:
+			TemplateURL: `url`
+			Parameters:
+				Param1: !Ref SomeParam1InParent
+				</code></pre>
+			<h3>Cross-Stack Refs - Re-using ALREADY MADE resources</h3>
+			<p>
+				Maybe we don't want to create new resources with each invocation (e.g. a
+				shared VPC). Cross-stack refs allow for the sharing of outputs from
+				other stacks, typically private by default. This is done via an exports table with key-value pairs (must be regionally unique)
+				Can be referenced by !ImportValue - Like !GetAtt but for cross-refs.
+				<pre>
+ExportName - Output and logical resource name (SHAREDVPCID)
+Export Value - Info about the specific physical resource 
+!ImportValue SHAREDVPCID will return physical resource (ARN?)
+			</pre>
+			</p>
+		</section>
+		<h2>EC2 - Elastic Compute Cloud</h2>
+		<section class="explanation">
+			<h3>Summary</h3>
+			<p>
+				EC2 instances are virtual machines within the AWS cloud. One benefit to
+				using them is they come with operating system and provide a wide range
+				of size/computing capabilities, However, it is only resilient within the
+				AZ itself and charges even when stopped.
+			</p>
+			<p>
+				EC2 Instances have three life cycles states. Running, stopped,
+				terminated. Running charges for CPU, memory, storage, and networking.
+				Stopped charges for storage. Terminated does not charge but is an
+				irreversible change.
+			</p>
+			<p>
+				AMI-ID to create EC2 instances are bound to region. The AMI contains the
+				root volume and a mapping for the boot and data volumes for each EC2.
+			</p>
+			<pre><code>
+Resources:
+  MyEC2Instance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: ami-006dcf34c09e50022
+			</code></pre>
+		</section>
+		<h2>ECS - Elastic Container Service</h2>
+		<section class="explanation">
+			<h3>Structure</h3>
+			<ul>
+				<li>
+					Container Definition - Contains the desired image and port mappings.
+					Can be imported from ECR or Docker.io
+				</li>
+				<li>
+					Task Definitions - Determines security (IAM) via task role, assigns
+					resources for processing, memory, networking, and compatibility
+				</li>
+				<li>Service Definition - Handles scalability and availability.</li>
+			</ul>
+			<p>
+				ECS can be hosted on an EC2 or Fargate instance. EC2 requires more
+				management, and is more expensive, but uses multiple availability zones
+				and load balancer through ASG. With EC2 you are charged even when it is not
+				running. Fargate is cheaper because it comes from a shared resource, containers are injected into the VPC from the shared pool.
+			</p>
+		</section>
+		<h2>S3 - Simple Storage Service </h2>
+		<section class="explanation">
+			<p>Data storage provided by AWS. Also allows for simple static site hosting. Security specifications via Bucket Policy and Public Access control. </p>
+			<pre><code>
+{
+"Version": "2012-10-17",
+"Statement": [
+	{	
+	"Sid": "PublicReadGetObject",
+	"Effect": "Allow",
+	"Principal": "*",
+	"Action": "s3:GetObject",
+	"Resource": "arn:aws:s3:::aws-notes-brandon-schefstad/*"
+	}
+ ]
+}
+			</code></pre>
+		</section>
+		<h2>Lambda - Serverless Function</h2>
+		<section class="explanation">
+			<p>Platform as a service, only charged for number of invocations and duration of invocation. Max 15 minute runtime and stateless. A new runtime (e.g. Python 3.8) is created each time the function is invoked. If need longer can use Step Functions. Will usually require an IAM role to execute.  Can use inline JS via ZipFile property.</p>
+			<pre><code>
+Resources:
+ HandlerLambdaFunction:
+	Type: AWS::Lambda::Function
+	 Properties:
+	  Code:
+		 ZipFile: |
+			exports.handler = async (event) => {
+			return {
+			 isBase64Encoded: false,
+			 statusCode:      200,
+			 headers:         { "content-type": "text/plain"},
+			 body:            "This is my Lambda function! - Brandon Schefstad"
+			 }
+		  }
+		Handler: index.handler
+		Role: !GetAtt LambdaFunctionRole.Arn # <- Defined in a different logical resource
+		Runtime: nodejs18.x		
+			</code></pre>
+		</section>
+	</body>
+</html>
